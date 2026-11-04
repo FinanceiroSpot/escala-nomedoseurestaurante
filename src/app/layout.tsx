@@ -19,7 +19,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="pt-BR" className="h-full antialiased" style={estilo}>
       <body className="flex min-h-full flex-col">
         <Cabecalho />
-        <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-5">{children}</main>
+        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-5">{children}</main>
         <footer className="px-4 py-6 text-center text-xs text-neutral-500">
           {identidade.nome} · sistema de escala
         </footer>
