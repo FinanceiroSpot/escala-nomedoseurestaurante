@@ -2,14 +2,26 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase, variaveisConfiguradas } from "@/lib/supabase";
-import { FUNCOES_PADRAO, type Funcionario } from "@/lib/tipos";
+import type { Funcionario, Turno } from "@/lib/tipos";
+import { META_POR_TURNO, OPCOES_FOLGA, SETORES } from "@/config/escala";
+import { DIAS_SEMANA_CURTO } from "@/lib/datas";
 
-type Formulario = { id: string | null; nome: string; funcao: string; telefone: string };
+type Formulario = {
+  id: string | null;
+  nome: string;
+  funcoes: string[];
+  telefone: string;
+  turno: string;
+  folga: string; // "2-3" ou ""
+};
 
-const VAZIO: Formulario = { id: null, nome: "", funcao: FUNCOES_PADRAO[0], telefone: "" };
+const VAZIO: Formulario = { id: null, nome: "", funcoes: [], telefone: "", turno: "", folga: "" };
+
+const nomesDias = (par: number[]) => par.map((d) => DIAS_SEMANA_CURTO[d]).join(" e ");
 
 export default function Equipe() {
   const [lista, setLista] = useState<Funcionario[]>([]);
+  const [turnos, setTurnos] = useState<Turno[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [form, setForm] = useState<Formulario | null>(null);
@@ -21,14 +33,20 @@ export default function Equipe() {
       setCarregando(false);
       return;
     }
-    const { data, error } = await supabase()
-      .from("funcionarios")
-      .select("id, nome, funcao, telefone, cpf, ativo")
-      .order("nome");
-    if (error) setErro(error.message);
+    const db = supabase();
+    const [f, t] = await Promise.all([
+      db
+        .from("funcionarios")
+        .select("id, nome, funcao, funcoes, telefone, cpf, ativo, turno_fixo_id, folgas")
+        .order("nome"),
+      db.from("turnos").select("*").order("ordem"),
+    ]);
+    const falha = f.error || t.error;
+    if (falha) setErro(falha.message);
     else {
       setErro(null);
-      setLista(data as Funcionario[]);
+      setLista(f.data as Funcionario[]);
+      setTurnos(t.data as Turno[]);
     }
     setCarregando(false);
   }, []);
@@ -41,11 +59,18 @@ export default function Equipe() {
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
     if (!form || !form.nome.trim()) return;
+    if (form.funcoes.length === 0) {
+      setErro("Escolha pelo menos uma função.");
+      return;
+    }
     setSalvando(true);
     const dados = {
       nome: form.nome.trim(),
-      funcao: form.funcao,
+      funcao: form.funcoes[0],
+      funcoes: form.funcoes,
       telefone: form.telefone.trim() || null,
+      turno_fixo_id: form.turno || null,
+      folgas: form.folga ? form.folga.split("-").map(Number) : [],
     };
     const db = supabase();
     const { error } = form.id
@@ -56,24 +81,39 @@ export default function Equipe() {
       setErro(error.message);
       return;
     }
+    setErro(null);
     setForm(null);
     await carregar();
   }
 
   async function mudarAtivo(f: Funcionario) {
     if (f.ativo && !window.confirm(`Desativar ${f.nome}? Ele deixa de aparecer na escala.`)) return;
-    const { error } = await supabase()
-      .from("funcionarios")
-      .update({ ativo: !f.ativo })
-      .eq("id", f.id);
+    const { error } = await supabase().from("funcionarios").update({ ativo: !f.ativo }).eq("id", f.id);
     if (error) setErro(error.message);
     else await carregar();
   }
 
+  function editar(f: Funcionario) {
+    const setores = f.funcoes?.length ? f.funcoes : SETORES.some((s) => s.nome === f.funcao) ? [f.funcao] : [];
+    setForm({
+      id: f.id,
+      nome: f.nome,
+      funcoes: setores,
+      telefone: f.telefone ?? "",
+      turno: f.turno_fixo_id ?? "",
+      folga: f.folgas?.length === 2 ? f.folgas.join("-") : "",
+    });
+  }
+
+  function alternarSetor(nome: string) {
+    if (!form) return;
+    const tem = form.funcoes.includes(nome);
+    setForm({ ...form, funcoes: tem ? form.funcoes.filter((x) => x !== nome) : [...form.funcoes, nome] });
+  }
+
+  const nomeTurno = (id: string | null) => turnos.find((t) => t.id === id)?.nome;
   const ativos = lista.filter((f) => f.ativo);
   const inativos = lista.filter((f) => !f.ativo);
-  // Mantém no seletor uma função antiga que não esteja na lista padrão.
-  const funcoes = form && !FUNCOES_PADRAO.includes(form.funcao) ? [form.funcao, ...FUNCOES_PADRAO] : FUNCOES_PADRAO;
 
   return (
     <div className="space-y-4">
@@ -83,6 +123,21 @@ export default function Equipe() {
           + Adicionar
         </button>
       </div>
+
+      {turnos.length > 0 && (
+        <div className="flex flex-wrap gap-2 text-sm">
+          {turnos.map((t) => {
+            const total = ativos.filter((f) => f.turno_fixo_id === t.id).length;
+            const meta = META_POR_TURNO[t.nome];
+            return (
+              <span key={t.id} className="rounded-full bg-white px-3 py-1 font-semibold shadow-sm">
+                {t.nome}: {total}
+                {meta ? ` de ${meta}` : ""}
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       {erro && <p className="cartao text-red-700">Erro: {erro}</p>}
       {carregando && <p className="text-neutral-600">Carregando...</p>}
@@ -99,15 +154,41 @@ export default function Equipe() {
               required
             />
           </label>
+          <fieldset>
+            <legend className="text-sm font-medium">Funções (marque mais de uma, se for o caso)</legend>
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              {SETORES.map((s) => (
+                <label key={s.nome} className="flex min-h-12 items-center gap-2 rounded-xl border border-neutral-300 px-3">
+                  <input
+                    type="checkbox"
+                    className="h-6 w-6"
+                    checked={form.funcoes.includes(s.nome)}
+                    onChange={() => alternarSetor(s.nome)}
+                  />
+                  {s.nome}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <label className="block">
-            <span className="text-sm font-medium">Função</span>
-            <select
-              className="campo mt-1"
-              value={form.funcao}
-              onChange={(e) => setForm({ ...form, funcao: e.target.value })}
-            >
-              {funcoes.map((fn) => (
-                <option key={fn}>{fn}</option>
+            <span className="text-sm font-medium">Turno fixo</span>
+            <select className="campo mt-1" value={form.turno} onChange={(e) => setForm({ ...form, turno: e.target.value })}>
+              <option value="">Escolha o turno</option>
+              {turnos.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium">Folgas fixas (2 dias seguidos)</span>
+            <select className="campo mt-1" value={form.folga} onChange={(e) => setForm({ ...form, folga: e.target.value })}>
+              <option value="">Escolha as folgas</option>
+              {OPCOES_FOLGA.map((par) => (
+                <option key={par.join("-")} value={par.join("-")}>
+                  {nomesDias(par)}
+                </option>
               ))}
             </select>
           </label>
@@ -134,41 +215,47 @@ export default function Equipe() {
       )}
 
       <ul className="space-y-3">
-        {[...ativos, ...inativos].map((f) => (
-          <li key={f.id} className={`cartao ${f.ativo ? "" : "opacity-60"}`}>
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-lg font-semibold">{f.nome}</p>
-                <p className="text-neutral-700">{f.funcao}</p>
-                {f.telefone && (
-                  <a href={`tel:${f.telefone}`} className="text-neutral-700 underline">
-                    {f.telefone}
-                  </a>
-                )}
+        {[...ativos, ...inativos].map((f) => {
+          const setores = f.funcoes?.length ? f.funcoes : [f.funcao];
+          const faltaDefinir = f.ativo && (!f.turno_fixo_id || f.folgas?.length !== 2);
+          return (
+            <li key={f.id} className={`cartao ${f.ativo ? "" : "opacity-60"}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-lg font-semibold">{f.nome}</p>
+                  <p className="text-neutral-700">{setores.join(" · ")}</p>
+                  {f.turno_fixo_id && (
+                    <p className="text-neutral-700">
+                      {nomeTurno(f.turno_fixo_id)}
+                      {f.folgas?.length === 2 ? ` · folga ${nomesDias(f.folgas)}` : ""}
+                    </p>
+                  )}
+                  {f.telefone && (
+                    <a href={`tel:${f.telefone}`} className="text-neutral-700 underline">
+                      {f.telefone}
+                    </a>
+                  )}
+                </div>
+                {!f.ativo && <span className="rounded-full bg-neutral-200 px-3 py-1 text-sm">Desativado</span>}
               </div>
-              {!f.ativo && (
-                <span className="rounded-full bg-neutral-200 px-3 py-1 text-sm">Desativado</span>
+              {faltaDefinir && (
+                <p className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm">
+                  Falta definir turno fixo e folgas. Sem isso, a escala não é gerada para essa pessoa.
+                </p>
               )}
-            </div>
-            <div className="mt-3 flex gap-2">
-              <button
-                className="botao-secundario flex-1"
-                onClick={() =>
-                  setForm({ id: f.id, nome: f.nome, funcao: f.funcao, telefone: f.telefone ?? "" })
-                }
-              >
-                Editar
-              </button>
-              <button className="botao-secundario flex-1" onClick={() => mudarAtivo(f)}>
-                {f.ativo ? "Desativar" : "Reativar"}
-              </button>
-            </div>
-          </li>
-        ))}
+              <div className="mt-3 flex gap-2">
+                <button className="botao-secundario flex-1" onClick={() => editar(f)}>
+                  Editar
+                </button>
+                <button className="botao-secundario flex-1" onClick={() => mudarAtivo(f)}>
+                  {f.ativo ? "Desativar" : "Reativar"}
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
-      {!carregando && lista.length === 0 && !erro && (
-        <p className="text-neutral-600">Nenhum funcionário cadastrado.</p>
-      )}
+      {!carregando && lista.length === 0 && !erro && <p className="text-neutral-600">Nenhum funcionário cadastrado.</p>}
     </div>
   );
 }

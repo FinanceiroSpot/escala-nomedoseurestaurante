@@ -4,9 +4,18 @@ export type Funcionario = {
   id: string;
   nome: string;
   funcao: string;
+  funcoes: string[]; // setores em que trabalha (pode ser mais de um)
   telefone: string | null;
   cpf: string | null;
   ativo: boolean;
+  turno_fixo_id: string | null;
+  folgas: number[]; // 2 dias seguidos, 1 = segunda ... 6 = sábado
+};
+
+export type FolgaDomingo = {
+  id: string;
+  funcionario_id: string;
+  data: string; // domingo de folga
 };
 
 export type Turno = {
