@@ -45,3 +45,21 @@ export const FUNCOES_PADRAO = [
   "Entregador",
   "Gerência",
 ];
+
+// Empréstimos entre as casas (tabela `emprestimos`, veja supabase/emprestimos.sql).
+export type Devedor = "paulista" | "jk";
+export type TipoEmprestimo = "mercadoria" | "utensilio";
+
+export type Emprestimo = {
+  id: string;
+  data: string; // dia do empréstimo, "2026-11-09"
+  devedor: Devedor; // quem deve pagar
+  tipo: TipoEmprestimo;
+  grupo: string;
+  produto: string;
+  quantidade: number;
+  unidade: string | null;
+  valor: number | null; // valor de 1 unidade
+  pago_em: string | null; // vazio = em aberto
+  observacao: string | null;
+};
