@@ -15,12 +15,21 @@ import {
   formatarMoeda,
   formatarQuantidade,
   lerNumero,
+  linhasDaTabela,
   listarEmprestimos,
   pagarItens,
   pagarParte,
   totalDoItem,
+  tituloDaTabela,
   type DadosEmprestimo,
 } from "@/lib/emprestimos";
+import {
+  baixarImagem,
+  compartilharImagem,
+  gerarImagemTabela,
+  podeCompartilhar,
+  type LinhaImagem,
+} from "@/lib/imagemTabela";
 import type { Devedor, Emprestimo, TipoEmprestimo } from "@/lib/tipos";
 import { Calendario, CampoData } from "@/components/Calendario";
 import { Folha } from "@/components/Folha";
@@ -65,6 +74,7 @@ export default function Emprestimos() {
   const [pagando, setPagando] = useState<Emprestimo[] | null>(null);
   const [busca, setBusca] = useState("");
   const [mes, setMes] = useState("todos");
+  const [visao, setVisao] = useState<"cartoes" | "tabela">("cartoes");
 
   const carregar = useCallback(async () => {
     try {
@@ -281,13 +291,39 @@ export default function Emprestimos() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-1 rounded-xl bg-neutral-200/70 p-1">
+                {(["cartoes", "tabela"] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => {
+                      setVisao(v);
+                      setSelecionados([]);
+                    }}
+                    className={`rounded-lg px-2 py-3 text-sm font-semibold ${
+                      visao === v ? "bg-white shadow" : "text-neutral-700"
+                    }`}
+                  >
+                    {v === "cartoes" ? "Cartões" : "Tabela"}
+                  </button>
+                ))}
+              </div>
+
               {visiveis.length === 0 && (
                 <p className="cartao text-center text-neutral-600">
                   Nada em aberto aqui. Use <strong>+ Novo</strong> para lançar um empréstimo.
                 </p>
               )}
 
-              <ul className="space-y-3">
+              {visao === "tabela" && visiveis.length > 0 && (
+                <VisaoTabela
+                  titulo={tituloDaTabela(devedor, aba)}
+                  linhas={linhasDaTabela(visiveis, hoje)}
+                  total={totalAberto}
+                  atualizadoEm={dataBR(hoje)}
+                />
+              )}
+
+              <ul className={`space-y-3 ${visao === "tabela" ? "hidden" : ""}`}>
                 {visiveis.map((e) => {
                   const dias = diasEmAtraso(e.data, hoje);
                   const marcado = selecionados.includes(e.id);
@@ -480,6 +516,121 @@ export default function Emprestimos() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ---------- Tabela no estilo da planilha + imagem para enviar no grupo ----------
+function VisaoTabela({
+  titulo,
+  linhas,
+  total,
+  atualizadoEm,
+}: {
+  titulo: string;
+  linhas: LinhaImagem[];
+  total: number;
+  atualizadoEm: string;
+}) {
+  const [trabalhando, setTrabalhando] = useState(false);
+  const [mensagem, setMensagem] = useState("");
+  const [compartilhavel, setCompartilhavel] = useState(false);
+  const nomeArquivo = `${titulo.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${atualizadoEm.replace(/\//g, "-")}.png`;
+  const dinheiro = (v: number) => v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Só mostra "Compartilhar" quando o aparelho permite enviar arquivo (celular).
+  useEffect(() => {
+    setCompartilhavel(typeof navigator !== "undefined" && typeof navigator.canShare === "function");
+  }, []);
+
+  async function gerar(acao: "baixar" | "compartilhar") {
+    setTrabalhando(true);
+    setMensagem("");
+    try {
+      const imagem = await gerarImagemTabela({ titulo, linhas, total, atualizadoEm });
+      if (acao === "baixar") baixarImagem(imagem, nomeArquivo);
+      else if (podeCompartilhar(imagem, nomeArquivo)) await compartilharImagem(imagem, nomeArquivo, titulo);
+      else {
+        baixarImagem(imagem, nomeArquivo);
+        setMensagem("Este aparelho não abre o compartilhar. A imagem foi baixada: envie pelo WhatsApp.");
+      }
+    } catch (e) {
+      setMensagem(e instanceof Error ? e.message : "Não foi possível gerar a imagem.");
+    } finally {
+      setTrabalhando(false);
+    }
+  }
+
+  const celula = "whitespace-nowrap px-2 py-1";
+  return (
+    <div className="space-y-3">
+      <div className="overflow-x-auto rounded-xl border border-neutral-300 bg-white shadow-sm">
+        <table
+          className="w-full min-w-[720px] border-collapse text-sm text-black"
+          style={{ fontFamily: "Calibri, Carlito, Arial, sans-serif" }}
+        >
+          <thead>
+            <tr style={{ background: "#DDEBF7" }}>
+              <th colSpan={8} className="px-2 py-2 text-xl font-bold">
+                {titulo}
+              </th>
+            </tr>
+            <tr style={{ background: "#9DC3E6" }} className="text-left">
+              {["DATA", "Grupo", "PRODUTO", "QTD", "UN/KG", "VALOR", "TOTAL", "DIAS EM ATRASO"].map((n) => (
+                <th key={n} className={`${celula} text-center font-bold`}>
+                  {n}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody style={{ background: "#E2EFDA" }}>
+            {linhas.map((l, i) => (
+              <tr key={i}>
+                <td className={`${celula} text-center`}>{l.data}</td>
+                <td className={`${celula} text-center`}>{l.grupo}</td>
+                <td className={`${celula} w-full`}>{l.produto}</td>
+                <td className={`${celula} text-center`}>{l.quantidade}</td>
+                <td className={`${celula} text-center`}>{l.unidade}</td>
+                <td className={`${celula} border-b border-black text-right`}>
+                  {l.valor !== null ? `R$ ${dinheiro(l.valor)}` : ""}
+                </td>
+                <td className={`${celula} border-b border-black text-right`}>
+                  R$ {l.total !== null ? dinheiro(l.total) : "-"}
+                </td>
+                <td className={`${celula} text-center`} style={{ color: "#E00000" }}>
+                  {l.dias}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr style={{ background: "#E2EFDA" }}>
+              <td colSpan={5} className="py-2" />
+              <td colSpan={2} className="border-2 border-black bg-white px-2 py-1 font-bold">
+                <span className="flex justify-between gap-3">
+                  <span>TOTAL =</span>
+                  <span>R$ {dinheiro(total)}</span>
+                </span>
+              </td>
+              <td className="px-2 py-1 text-center font-bold" style={{ background: "#DDEBF7" }}>
+                {atualizadoEm}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <button className="botao flex-1" disabled={trabalhando} onClick={() => gerar("baixar")}>
+          {trabalhando ? "Gerando..." : "⬇ Baixar imagem da tabela"}
+        </button>
+        {compartilhavel && (
+          <button className="botao-secundario flex-1" disabled={trabalhando} onClick={() => gerar("compartilhar")}>
+            Compartilhar no WhatsApp
+          </button>
+        )}
+      </div>
+      {mensagem && <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{mensagem}</p>}
     </div>
   );
 }

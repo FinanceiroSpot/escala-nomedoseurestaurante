@@ -2,6 +2,7 @@
 import { supabase } from "@/lib/supabase";
 import { paraData } from "@/lib/datas";
 import type { Devedor, Emprestimo, TipoEmprestimo } from "@/lib/tipos";
+import type { LinhaImagem } from "@/lib/imagemTabela";
 
 const COLUNAS =
   "id, data, devedor, tipo, grupo, produto, quantidade, unidade, valor, pago_em, observacao";
@@ -132,4 +133,27 @@ export function lerNumero(texto: string): number | null {
   if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
+}
+
+// ---------- Tabela no estilo da planilha (tela e imagem) ----------
+
+export function tituloDaTabela(devedor: Devedor, tipo: TipoEmprestimo): string {
+  const base = devedor === "paulista" ? "Transferencia JK para Paulista" : "Transferencia PAULISTA para JK";
+  return tipo === "utensilio" ? `${base} · Utensílios` : base;
+}
+
+/** Linhas em aberto, da data mais antiga para a mais nova, como na planilha. */
+export function linhasDaTabela(itens: Emprestimo[], atualizadoEm: string): LinhaImagem[] {
+  return [...itens]
+    .sort((a, b) => a.data.localeCompare(b.data))
+    .map((e) => ({
+      data: dataCurta(e.data),
+      grupo: e.grupo,
+      produto: e.produto,
+      quantidade: formatarQuantidade(e.quantidade),
+      unidade: e.unidade ?? "",
+      valor: e.valor,
+      total: e.valor === null ? null : totalDoItem(e),
+      dias: diasEmAtraso(e.data, atualizadoEm),
+    }));
 }
